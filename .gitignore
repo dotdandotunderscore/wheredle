@@ -1,0 +1,11 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env
+*.egg-info/
+.pytest_cache/
+
+# Runtime database and downloaded puzzle images (the countries dataset stays tracked)
+data/game.db
+data/images/

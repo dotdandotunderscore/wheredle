@@ -1,0 +1,8 @@
+discord.py>=2.4
+python-dotenv>=1.0
+pycountry>=24.0
+rapidfuzz>=3.0
+reverse_geocoder>=1.5.1
+Pillow>=10.0
+requests>=2.31
+tzdata>=2024.1
