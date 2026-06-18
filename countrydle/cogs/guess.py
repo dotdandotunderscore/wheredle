@@ -49,10 +49,26 @@ class ConfirmGuess(discord.ui.View):
                 await interaction.response.edit_message(content="You already guessed today.", view=None)
                 return
             country = countries.get(self.iso2)
+            answer = countries.get(puzzle["answer_iso"])
             verdict = "Bang on! 100 pts 🎯" if result["exact"] else f"{result['score']} pts · {round(result['distance_km'])} km away"
-            header = f"Locked **{countries.flag_emoji(self.iso2)} {country.name}** — {verdict}"
-            embed = _board_embed("Today's guesses so far", repo.board(conn, self.puzzle_id))
+            answer_line = f"\n🌍 Answer: **{countries.flag_emoji(puzzle['answer_iso'])} {answer.name}**"
+            header = f"Locked **{countries.flag_emoji(self.iso2)} {country.name}** — {verdict}{answer_line}"
+            board_rows = repo.board(conn, self.puzzle_id)
+            embed = _board_embed("Today's guesses so far", board_rows)
             await interaction.response.edit_message(content=header, embed=embed, view=None)
+            channel = self.cog.bot.get_channel(self.cog.bot.config.channel_id)
+            if channel:
+                existing_id = self.cog._board_messages.get(self.puzzle_id)
+                if existing_id:
+                    try:
+                        msg = await channel.fetch_message(existing_id)
+                        await msg.edit(embed=embed)
+                    except discord.NotFound:
+                        msg = await channel.send(embed=embed)
+                        self.cog._board_messages[self.puzzle_id] = msg.id
+                else:
+                    msg = await channel.send(embed=embed)
+                    self.cog._board_messages[self.puzzle_id] = msg.id
         finally:
             conn.close()
 
@@ -67,6 +83,7 @@ class GuessCog(commands.Cog):
     def __init__(self, bot, db_path):
         self.bot = bot
         self.db_path = db_path
+        self._board_messages: dict[int, int] = {}  # puzzle_id → channel message id
 
     @app_commands.command(name="guess", description="Guess which country today's photo was taken in")
     @app_commands.describe(country="Start typing a country name")

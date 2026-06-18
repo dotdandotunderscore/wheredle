@@ -26,6 +26,43 @@ scored by how close their country is to the real one.
 5. Leaderboards, streaks, share text, 🚩 report + admin `/skip`.
 6. Deploy to Railway (`Procfile`), EXIF strip/resize polish.
 
+## Railway deploy
+
+1. Create a Railway project and link the repo.
+2. Add a **Volume** in the Railway dashboard, mounted at `/data`.
+3. Set environment variables (Settings → Variables):
+
+| Variable | Example |
+|---|---|
+| `DISCORD_TOKEN` | your bot token |
+| `GUILD_ID` | your server ID |
+| `CHANNEL_ID` | the game channel ID |
+| `ADMIN_IDS` | comma-separated user IDs |
+| `TIMEZONE` | `Europe/London` |
+| `POST_HOUR` | `9` |
+| `DATABASE_PATH` | `/data/game.db` |
+
+4. On first deploy, initialise the database and seed the queue:
+
+```bash
+railway run python scripts/init_db.py
+railway run python scripts/fetch_candidates.py
+```
+
+The bot tops up the queue automatically every week (skips if 50+ puzzles are already queued).
+
+## Discord bot setup
+
+When creating the bot application, use these OAuth2 settings:
+
+**Scopes:** `bot`, `applications.commands`
+
+**Bot permissions:** Send Messages, Embed Links, Attach Files, Add Reactions, Read Message History
+
+No privileged gateway intents are required.
+
+https://discord.com/oauth2/authorize?client_id=1517088110180171888&permissions=116800&integration_type=0&scope=bot+applications.commands
+
 ## Phase 1 setup
 
 ```bash

@@ -105,7 +105,7 @@ def void_live(conn, today):
     with conn:
         live = get_live_puzzle(conn)
         if live is not None:
-            conn.execute("UPDATE puzzles SET status='voided' WHERE id=?", (live["id"],))
+            conn.execute("UPDATE puzzles SET status='voided', puzzle_date=NULL WHERE id=?", (live["id"],))
         new = conn.execute(
             "SELECT * FROM puzzles WHERE status='queued' ORDER BY id LIMIT 1"
         ).fetchone()

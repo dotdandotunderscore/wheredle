@@ -9,6 +9,7 @@ from discord.ext import commands, tasks
 from .. import db
 from ..game import countries
 from ..game import repository as repo
+from ..sourcing.candidates import gather, queue_candidate
 from ..sourcing.images import fetch_clean_image
 
 log = logging.getLogger("countrydle.daily")
@@ -28,9 +29,11 @@ class DailyCog(commands.Cog):
         self.admin_ids = admin_ids
         self.daily_post.change_interval(time=datetime.time(hour=post_hour, tzinfo=self.tz))
         self.daily_post.start()
+        self.fetch_queue.start()
 
     def cog_unload(self):
         self.daily_post.cancel()
+        self.fetch_queue.cancel()
 
     @tasks.loop(time=datetime.time(hour=9))  # interval is reset in __init__ from config
     async def daily_post(self):
@@ -38,6 +41,30 @@ class DailyCog(commands.Cog):
 
     @daily_post.before_loop
     async def _before(self):
+        await self.bot.wait_until_ready()
+
+    @tasks.loop(hours=168)  # weekly
+    async def fetch_queue(self):
+        """Top up the puzzle queue from Wikimedia Commons if it's running low."""
+        conn = db.connect(self.db_path)
+        try:
+            queued = conn.execute("SELECT COUNT(*) FROM puzzles WHERE status='queued'").fetchone()[0]
+            if queued >= 50:
+                log.info("fetch_queue: %d queued, skipping", queued)
+                return
+            added = 0
+            with conn:
+                for candidate, iso2 in gather():
+                    if queue_candidate(conn, candidate, iso2):
+                        added += 1
+            log.info("fetch_queue: added %d puzzles (%d now queued)", added, queued + added)
+        except Exception:
+            log.exception("fetch_queue failed")
+        finally:
+            conn.close()
+
+    @fetch_queue.before_loop
+    async def _before_fetch(self):
         await self.bot.wait_until_ready()
 
     async def _post_today(self):
@@ -71,12 +98,12 @@ class DailyCog(commands.Cog):
         message = await channel.send(embed=embed, file=discord.File(image, filename="puzzle.jpg"))
         repo.set_message_id(conn, puzzle["id"], message.id)
 
-    def _reveal_embed(self, conn, puzzle):
+    def _reveal_embed(self, conn, puzzle, title_prefix="📍 Yesterday's answer"):
         """Build the reveal embed: answer, leaderboard, and required photo attribution."""
         country = countries.get(puzzle["answer_iso"])
         name = country.name if country else puzzle["answer_iso"]
         embed = discord.Embed(
-            title=f"📍 Yesterday's answer: {countries.flag_emoji(puzzle['answer_iso'])} {name}",
+            title=f"{title_prefix}: {countries.flag_emoji(puzzle['answer_iso'])} {name}",
             colour=0xF1C40F,
         )
         rows = repo.board(conn, puzzle["id"])
@@ -111,11 +138,15 @@ class DailyCog(commands.Cog):
         await self._void_and_repost(interaction.channel, "Puzzle skipped by an admin.")
 
     async def _void_and_repost(self, channel, reason):
-        """Void the live puzzle (no reveal) and post the next queued one."""
+        """Reveal the live puzzle's answer, void it, and post the next queued one."""
         conn = db.connect(self.db_path)
         try:
+            old = repo.get_live_puzzle(conn)
             new = repo.void_live(conn, self._today())
-            await channel.send(f"🚫 {reason}")
+            if old is not None:
+                await channel.send(f"🚫 {reason}", embed=self._reveal_embed(conn, old, title_prefix="📍 Answer"))
+            else:
+                await channel.send(f"🚫 {reason}")
             if new is None:
                 await channel.send("⚠️ No puzzles queued — run `scripts/fetch_candidates.py`.")
                 return

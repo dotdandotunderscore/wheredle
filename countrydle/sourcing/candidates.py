@@ -1,3 +1,4 @@
+import random
 import re
 
 from ..game import countries
@@ -6,6 +7,7 @@ from .geocode import country_for
 
 MIN_WIDTH = 1920
 MIN_HEIGHT = 1080
+MAX_ASPECT_RATIO = 2.0  # rejects 360° panoramas (2:1+); allows wide cityscape skylines
 ALLOWED_MIME = {"image/jpeg", "image/png"}
 
 # Titles matching these are not "guess the place from a striking photo" puzzles.
@@ -19,8 +21,6 @@ BLOCK_RE = re.compile(
 DEFAULT_CATEGORIES = (
     "Featured pictures of landscapes",
     "Quality images of landscapes",
-    "Quality images of nature",
-    "Quality images of mountains",
     "Quality images of cityscapes",
 )
 
@@ -32,6 +32,8 @@ def qualify(candidate):
     width = candidate.get("width") or 0
     height = candidate.get("height") or 0
     if width < MIN_WIDTH or height < MIN_HEIGHT:
+        return None
+    if height > 0 and (width / height) > MAX_ASPECT_RATIO:
         return None
     if BLOCK_RE.search(candidate.get("title") or ""):
         return None
@@ -46,7 +48,16 @@ def gather(limit_per_category=50, categories=DEFAULT_CATEGORIES):
             iso2 = qualify(candidate)
             if iso2:
                 qualified.append((candidate, iso2))
-    return qualified
+    random.shuffle(qualified)
+    seen_authors: set[str] = set()
+    deduped = []
+    for candidate, iso2 in qualified:
+        author = candidate.get("author")
+        if author is None or author not in seen_authors:
+            deduped.append((candidate, iso2))
+            if author is not None:
+                seen_authors.add(author)
+    return deduped
 
 
 def queue_candidate(conn, candidate, iso2):
