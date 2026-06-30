@@ -78,7 +78,7 @@ def fetch_candidates(category, limit=50, session=None):
     cont = {}
     yielded = 0
     while True:
-        response = session.get(API, params={**params, **cont}, timeout=30)
+        response = session.get(API, params={**params, **cont}, timeout=(5,30))
         response.raise_for_status()
         data = response.json()
         for page in data.get("query", {}).get("pages", {}).values():

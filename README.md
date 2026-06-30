@@ -79,3 +79,7 @@ python scripts/init_db.py            # create data/game.db
 ```
 
 `main.py` starts the bot (no game commands yet — those arrive in Phase 3).
+
+## SSHing in
+Railway container builder creates a venv for the bot at /opt/venv/bin.
+After sshing in, use `source /opt/venv/bin/activate` to use the same venv as the bot while running scripts
