@@ -103,7 +103,7 @@ class DailyCog(commands.Cog):
             if closed is not None:
                 await channel.send(embed=self._reveal_embed(conn, closed))
             if new is None:
-                await channel.send("⚠️ No puzzles queued — run `scripts/fetch_candidates.py`.")
+                await channel.send("⚠️ No puzzles queued — use `/fetchcandidates`.")
                 return
             await self._send_puzzle(channel, new, conn)
         finally:
@@ -172,7 +172,7 @@ class DailyCog(commands.Cog):
             else:
                 await channel.send(f"🚫 {reason}")
             if new is None:
-                await channel.send("⚠️ No puzzles queued — run `scripts/fetch_candidates.py`.")
+                await channel.send("⚠️ No puzzles queued — use `/fetchcandidates`.")
                 return
             await self._send_puzzle(channel, new, conn)
         finally:
