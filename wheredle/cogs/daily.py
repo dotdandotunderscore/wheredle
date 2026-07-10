@@ -397,14 +397,10 @@ class DailyCog(commands.Cog):
         message = await channel.fetch_message(payload.message_id)
         embed = message.embeds[0] if message.embeds else discord.Embed()
         embed.description = verdict
-        if message.attachments:
-            # Re-link the embed image to its attachment. On an edit the reference only binds
-            # if the attachment is passed back in; otherwise Discord renders a second loose copy.
-            attachment = message.attachments[0]
-            embed.set_image(url=f"attachment://{attachment.filename}")
-            await message.edit(embed=embed, attachments=[attachment])
-        else:
-            await message.edit(embed=embed)
+        # Drop the embed's image reference. The uploaded attachment still renders once on its
+        # own; leaving both the embed image and the attachment linked is what duplicated it.
+        embed.set_image(url=None)
+        await message.edit(embed=embed)
         try:
             await message.clear_reactions()  # tidy-up only; needs Manage Messages
         except discord.Forbidden:
