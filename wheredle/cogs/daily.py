@@ -398,10 +398,13 @@ class DailyCog(commands.Cog):
         embed = message.embeds[0] if message.embeds else discord.Embed()
         embed.description = verdict
         if message.attachments:
-            # Re-link the image to its attachment; editing with the resolved CDN url
-            # makes Discord render a second, un-embedded copy of the same image.
-            embed.set_image(url=f"attachment://{message.attachments[0].filename}")
-        await message.edit(embed=embed)
+            # Re-link the embed image to its attachment. On an edit the reference only binds
+            # if the attachment is passed back in; otherwise Discord renders a second loose copy.
+            attachment = message.attachments[0]
+            embed.set_image(url=f"attachment://{attachment.filename}")
+            await message.edit(embed=embed, attachments=[attachment])
+        else:
+            await message.edit(embed=embed)
         try:
             await message.clear_reactions()  # tidy-up only; needs Manage Messages
         except discord.Forbidden:
