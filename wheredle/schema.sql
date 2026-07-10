@@ -15,9 +15,10 @@ CREATE TABLE IF NOT EXISTS puzzles (
     answer_iso       TEXT NOT NULL,                   -- ISO 3166-1 alpha-2
     answer_lat       REAL NOT NULL,
     answer_lon       REAL NOT NULL,
-    status           TEXT NOT NULL DEFAULT 'queued',  -- queued|live|closed|voided
-    message_id       INTEGER,                         -- Discord message id of the posted puzzle
-    created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    status            TEXT NOT NULL DEFAULT 'pending', -- pending|queued|live|closed|voided|rejected
+    message_id        INTEGER,                         -- Discord message id of the posted puzzle
+    review_message_id INTEGER,                         -- Discord message id of the review-channel card
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS guesses (

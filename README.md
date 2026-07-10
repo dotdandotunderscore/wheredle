@@ -9,6 +9,9 @@ scored by how close their country is to the real one.
 - **Photos:** Wikimedia Commons *Quality images*, sampled per-country from a balanced random
   subset of nations each run so no region dominates, then auto-filtered to those with a single,
   clean country location. Attribution is shown at reveal.
+- **Human review gate:** auto-qualified candidates land in a `pending` state and are posted to a
+  private review channel (location hidden) where an admin reacts ✅/❌. Only approved photos enter
+  the live queue, so bad images are caught before anyone plays. Rejected images are never re-queued.
 - **One guess/day**, distance-scored: `score = round(100 · e^(−distance_km / 4000))`,
   exact country = 100.
 - **Spoiler-safe + social:** you see nothing about others until your guess is locked; the
@@ -38,6 +41,7 @@ scored by how close their country is to the real one.
 | `DISCORD_TOKEN` | your bot token |
 | `GUILD_ID` | your server ID |
 | `CHANNEL_ID` | the game channel ID |
+| `REVIEW_CHANNEL_ID` | private channel where admins vet candidates (✅/❌) |
 | `ADMIN_IDS` | comma-separated user IDs |
 | `TIMEZONE` | `Europe/London` |
 | `POST_HOUR` | `9` |
@@ -50,7 +54,8 @@ railway run python scripts/init_db.py
 railway run python scripts/fetch_candidates.py
 ```
 
-The bot tops up the queue automatically every week (skips if 50+ puzzles are already queued).
+The bot tops up daily, fetching new candidates whenever fewer than 20 puzzles are approved or
+awaiting review, and posts un-reviewed ones to `REVIEW_CHANNEL_ID` for an admin to ✅/❌.
 
 ## Discord bot setup
 
@@ -58,11 +63,11 @@ When creating the bot application, use these OAuth2 settings:
 
 **Scopes:** `bot`, `applications.commands`
 
-**Bot permissions:** Send Messages, Embed Links, Attach Files, Add Reactions, Read Message History
+**Bot permissions:** Send Messages, Embed Links, Attach Files, Add Reactions, Read Message History, Manage Messages
 
 No privileged gateway intents are required.
 
-https://discord.com/oauth2/authorize?client_id=1517088110180171888&permissions=116800&integration_type=0&scope=bot+applications.commands
+https://discord.com/oauth2/authorize?client_id=1517088110180171888&permissions=124992&integration_type=0&scope=bot+applications.commands
 
 ## Phase 1 setup
 

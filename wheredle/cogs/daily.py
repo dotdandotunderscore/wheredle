@@ -18,6 +18,12 @@ log = logging.getLogger("wheredle.daily")
 REPORT_EMOJI = "🚩"
 REPORT_THRESHOLD = 3  # distinct flag reactions that auto-void a puzzle
 
+APPROVE_EMOJI = "✅"
+REJECT_EMOJI = "❌"
+REVIEW_BATCH = 5             # review cards posted per topup tick (keeps under rate limits)
+QUEUE_TARGET = 20           # stop fetching once this many puzzles are approved or awaiting review
+LOW_QUEUE_THRESHOLD = 5     # @here the review channel when approved puzzles drop below this
+
 
 class ConfirmWipe(discord.ui.View):
     """Confirmation gate for /wipequeue — prevents accidental queue destruction."""
@@ -45,19 +51,23 @@ class ConfirmWipe(discord.ui.View):
 class DailyCog(commands.Cog):
     """Posts a new puzzle each day and reveals the previous day's answer."""
 
-    def __init__(self, bot, db_path, channel_id, timezone, post_hour, admin_ids):
+    def __init__(self, bot, db_path, channel_id, review_channel_id, timezone, post_hour, admin_ids):
         self.bot = bot
         self.db_path = db_path
         self.channel_id = channel_id
+        self.review_channel_id = review_channel_id
         self.tz = ZoneInfo(timezone)
         self.admin_ids = admin_ids
+        self._low_queue_alerted = False  # de-dupes the low-queue @everyone ping
         self.daily_post.change_interval(time=datetime.time(hour=post_hour, tzinfo=self.tz))
         self.daily_post.start()
         self.fetch_queue.start()
+        self.post_reviews.start()
 
     def cog_unload(self):
         self.daily_post.cancel()
         self.fetch_queue.cancel()
+        self.post_reviews.cancel()
 
     @tasks.loop(time=datetime.time(hour=9))  # interval is reset in __init__ from config
     async def daily_post(self):
@@ -69,19 +79,19 @@ class DailyCog(commands.Cog):
 
     @tasks.loop(hours=24)
     async def fetch_queue(self):
-        """Top up the puzzle queue from Wikimedia Commons if it's running low."""
+        """Top up from Wikimedia Commons if the review pipeline (approved + pending) is low."""
         conn = db.connect(self.db_path)
         try:
-            queued = conn.execute("SELECT COUNT(*) FROM puzzles WHERE status='queued'").fetchone()[0]
-            if queued >= 10:
-                log.info("fetch_queue: %d queued, skipping", queued)
+            ready, pending = repo.queue_depth(conn)
+            if ready + pending >= QUEUE_TARGET:
+                log.info("fetch_queue: %d ready + %d pending, skipping", ready, pending)
                 return
             added = 0
             with conn:
                 for candidate, iso2 in gather():
                     if queue_candidate(conn, candidate, iso2):
                         added += 1
-            log.info("fetch_queue: added %d puzzles (%d now queued)", added, queued + added)
+            log.info("fetch_queue: added %d pending puzzles (was %d ready, %d pending)", added, ready, pending)
         except Exception:
             log.exception("fetch_queue failed")
         finally:
@@ -90,6 +100,61 @@ class DailyCog(commands.Cog):
     @fetch_queue.before_loop
     async def _before_fetch(self):
         await self.bot.wait_until_ready()
+
+    @tasks.loop(minutes=5)
+    async def post_reviews(self):
+        """Post un-reviewed pending puzzles to the review channel for admin vetting."""
+        if not self.review_channel_id:
+            return
+        channel = self.bot.get_channel(self.review_channel_id)
+        if channel is None:
+            log.warning("review channel %s not found", self.review_channel_id)
+            return
+        conn = db.connect(self.db_path)
+        try:
+            for puzzle in repo.get_unposted_pending(conn, limit=REVIEW_BATCH):
+                await self._post_review(channel, puzzle, conn)
+            await self._alert_if_low(conn, channel)
+        except Exception:
+            log.exception("post_reviews failed")
+        finally:
+            conn.close()
+
+    @post_reviews.before_loop
+    async def _before_reviews(self):
+        await self.bot.wait_until_ready()
+
+    async def _alert_if_low(self, conn, channel):
+        """Ping the review channel when the approved queue is running low (once per drain)."""
+        ready, _ = repo.queue_depth(conn)
+        if ready >= LOW_QUEUE_THRESHOLD:
+            self._low_queue_alerted = False
+            return
+        if self._low_queue_alerted:
+            return
+        await channel.send(
+            f"@everyone only **{ready}** approved puzzle(s) left in the queue — "
+            "please review the cards above so the daily game doesn't run dry.",
+            allowed_mentions=discord.AllowedMentions(everyone=True),
+        )
+        self._low_queue_alerted = True
+
+    async def _post_review(self, channel, puzzle, conn):
+        """Post a location-blind review card and seed it with the vote reactions."""
+        image = fetch_clean_image(puzzle["image_path"])
+        embed = discord.Embed(
+            title="🕵️ Review candidate",
+            description=(
+                f"Is this a good Wheredle photo? React {APPROVE_EMOJI} to approve or "
+                f"{REJECT_EMOJI} to reject.\nThe location is hidden on purpose — judge the image alone."
+            ),
+            colour=0x9B59B6,
+        )
+        embed.set_image(url="attachment://review.jpg")
+        message = await channel.send(embed=embed, file=discord.File(image, filename="review.jpg"))
+        await message.add_reaction(APPROVE_EMOJI)
+        await message.add_reaction(REJECT_EMOJI)
+        repo.set_review_message_id(conn, puzzle["id"], message.id)
 
     async def _post_today(self):
         """Close yesterday's puzzle (reveal it) and post today's."""
@@ -103,7 +168,7 @@ class DailyCog(commands.Cog):
             if closed is not None:
                 await channel.send(embed=self._reveal_embed(conn, closed))
             if new is None:
-                await channel.send("⚠️ No puzzles queued — use `/fetchcandidates`.")
+                await channel.send("⚠️ No approved puzzles queued — approve some in the review channel (or run `/fetchcandidates`).")
                 return
             await self._send_puzzle(channel, new, conn)
         finally:
@@ -172,7 +237,7 @@ class DailyCog(commands.Cog):
             else:
                 await channel.send(f"🚫 {reason}")
             if new is None:
-                await channel.send("⚠️ No puzzles queued — use `/fetchcandidates`.")
+                await channel.send("⚠️ No approved puzzles queued — approve some in the review channel (or run `/fetchcandidates`).")
                 return
             await self._send_puzzle(channel, new, conn)
         finally:
@@ -220,11 +285,12 @@ class DailyCog(commands.Cog):
                     for candidate, iso2 in candidates:
                         if queue_candidate(conn, candidate, iso2):
                             added += 1
-                queued = conn.execute("SELECT COUNT(*) FROM puzzles WHERE status='queued'").fetchone()[0]
+                ready, pending = repo.queue_depth(conn)
             finally:
                 conn.close()
             await interaction.followup.send(
-                f"Done — added **{added}** new puzzle(s). **{queued}** queued total.",
+                f"Done — added **{added}** candidate(s) for review. "
+                f"**{pending}** awaiting review, **{ready}** approved.",
                 ephemeral=True,
             )
         except Exception:
@@ -233,7 +299,12 @@ class DailyCog(commands.Cog):
 
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload):
-        """Auto-void the live puzzle once enough players flag it as broken."""
+        """Route review-channel votes and player report reactions."""
+        if self.bot.user is not None and payload.user_id == self.bot.user.id:
+            return  # the bot seeds ✅/❌ itself — don't treat those as votes
+        if self.review_channel_id and payload.channel_id == self.review_channel_id:
+            await self._handle_review_vote(payload)
+            return
         if str(payload.emoji) != REPORT_EMOJI:
             return
         conn = db.connect(self.db_path)
@@ -249,10 +320,48 @@ class DailyCog(commands.Cog):
         if flags is not None and flags.count >= REPORT_THRESHOLD:
             await self._void_and_repost(channel, f"Puzzle voided after {flags.count} reports.")
 
+    async def _handle_review_vote(self, payload):
+        """Approve or reject a pending puzzle when an admin votes on its review card."""
+        emoji = str(payload.emoji)
+        if emoji not in (APPROVE_EMOJI, REJECT_EMOJI):
+            return
+        if payload.user_id not in self.admin_ids:
+            return
+        conn = db.connect(self.db_path)
+        try:
+            puzzle = repo.get_pending_by_review_message(conn, payload.message_id)
+            if puzzle is None:
+                return  # already resolved, or not a review card
+            if emoji == APPROVE_EMOJI:
+                repo.approve_puzzle(conn, puzzle["id"])
+                verdict = f"{APPROVE_EMOJI} Approved — added to the live queue."
+            else:
+                repo.reject_puzzle(conn, puzzle["id"])
+                verdict = f"{REJECT_EMOJI} Rejected."
+        finally:
+            conn.close()
+        channel = self.bot.get_channel(payload.channel_id)
+        message = await channel.fetch_message(payload.message_id)
+        embed = message.embeds[0] if message.embeds else discord.Embed()
+        embed.description = verdict
+        await message.edit(embed=embed)
+        try:
+            await message.clear_reactions()  # tidy-up only; needs Manage Messages
+        except discord.Forbidden:
+            pass
+
 
 async def setup(bot):
     """discord.py extension entry point."""
     cfg = bot.config
     await bot.add_cog(
-        DailyCog(bot, cfg.database_path, cfg.channel_id, cfg.timezone, cfg.post_hour, cfg.admin_ids)
+        DailyCog(
+            bot,
+            cfg.database_path,
+            cfg.channel_id,
+            cfg.review_channel_id,
+            cfg.timezone,
+            cfg.post_hour,
+            cfg.admin_ids,
+        )
     )

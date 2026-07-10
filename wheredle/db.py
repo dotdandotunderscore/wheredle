@@ -17,6 +17,10 @@ def _migrate(conn):
     columns = {row["name"] for row in conn.execute("PRAGMA table_info(puzzles)").fetchall()}
     if "message_id" not in columns:
         conn.execute("ALTER TABLE puzzles ADD COLUMN message_id INTEGER")
+    if "review_message_id" not in columns:
+        conn.execute("ALTER TABLE puzzles ADD COLUMN review_message_id INTEGER")
+        # One-time on upgrade: the pre-review queue was never vetted, so send it through review.
+        conn.execute("UPDATE puzzles SET status='pending' WHERE status='queued'")
 
 
 def init_db(path):

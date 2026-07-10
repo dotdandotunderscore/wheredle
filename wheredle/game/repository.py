@@ -123,6 +123,58 @@ def set_message_id(conn, puzzle_id, message_id):
         conn.execute("UPDATE puzzles SET message_id=? WHERE id=?", (message_id, puzzle_id))
 
 
+def get_unposted_pending(conn, limit=5):
+    """Return pending puzzles not yet shown in the review channel, oldest first."""
+    return conn.execute(
+        """SELECT * FROM puzzles
+           WHERE status='pending' AND review_message_id IS NULL
+           ORDER BY id LIMIT ?""",
+        (limit,),
+    ).fetchall()
+
+
+def set_review_message_id(conn, puzzle_id, message_id):
+    """Record the Discord message id of a puzzle's review card."""
+    with conn:
+        conn.execute("UPDATE puzzles SET review_message_id=? WHERE id=?", (message_id, puzzle_id))
+
+
+def get_pending_by_review_message(conn, message_id):
+    """Return the still-pending puzzle behind a review card, or None if already resolved."""
+    return conn.execute(
+        "SELECT * FROM puzzles WHERE status='pending' AND review_message_id=?",
+        (message_id,),
+    ).fetchone()
+
+
+def approve_puzzle(conn, puzzle_id):
+    """Promote a reviewed puzzle into the live queue. Returns True if it was still pending."""
+    with conn:
+        cur = conn.execute(
+            "UPDATE puzzles SET status='queued' WHERE id=? AND status='pending'", (puzzle_id,)
+        )
+    return cur.rowcount > 0
+
+
+def reject_puzzle(conn, puzzle_id):
+    """Mark a reviewed puzzle rejected. The row is kept so its image is never re-queued."""
+    with conn:
+        cur = conn.execute(
+            "UPDATE puzzles SET status='rejected' WHERE id=? AND status='pending'", (puzzle_id,)
+        )
+    return cur.rowcount > 0
+
+
+def queue_depth(conn):
+    """Return (approved-and-ready count, awaiting-review count) for topup decisions."""
+    row = conn.execute(
+        """SELECT COALESCE(SUM(status='queued'), 0) AS ready,
+                  COALESCE(SUM(status='pending'), 0) AS pending
+           FROM puzzles"""
+    ).fetchone()
+    return row["ready"], row["pending"]
+
+
 def leaderboard(conn, since=None, limit=15):
     """Return ranked totals per user, optionally only counting puzzles on/after `since`."""
     query = """SELECT u.display_name,

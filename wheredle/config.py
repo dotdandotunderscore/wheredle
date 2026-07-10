@@ -18,6 +18,7 @@ class Config:
     discord_token: str
     guild_id: int
     channel_id: int
+    review_channel_id: int
     admin_ids: set
     timezone: str
     post_hour: int
@@ -30,6 +31,7 @@ class Config:
             discord_token=os.getenv("DISCORD_TOKEN", ""),
             guild_id=int(os.getenv("GUILD_ID") or 0),
             channel_id=int(os.getenv("CHANNEL_ID") or 0),
+            review_channel_id=int(os.getenv("REVIEW_CHANNEL_ID") or 0),
             admin_ids=_parse_ids(os.getenv("ADMIN_IDS", "")),
             timezone=os.getenv("TIMEZONE", "Europe/London"),
             post_hour=int(os.getenv("POST_HOUR") or 9),

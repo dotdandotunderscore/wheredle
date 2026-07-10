@@ -87,7 +87,7 @@ def gather(per_country=1, countries_per_run=10, fetch_limit=60, catalogue=None):
 
 
 def queue_candidate(conn, candidate, iso2):
-    """Insert a qualified candidate as a queued puzzle; skip if its image was already used."""
+    """Insert a qualified candidate as a pending puzzle (awaiting admin review); skip if already used."""
     used = conn.execute(
         "SELECT 1 FROM puzzles WHERE source='commons' AND source_id=?",
         (str(candidate["pageid"]),),
@@ -99,7 +99,7 @@ def queue_candidate(conn, candidate, iso2):
         """INSERT INTO puzzles
                (image_path, source, source_id, author, license, attribution_url,
                 answer_iso, answer_lat, answer_lon, status)
-           VALUES (?, 'commons', ?, ?, ?, ?, ?, ?, ?, 'queued')""",
+           VALUES (?, 'commons', ?, ?, ?, ?, ?, ?, ?, 'pending')""",
         (
             candidate["image_url"],
             str(candidate["pageid"]),
