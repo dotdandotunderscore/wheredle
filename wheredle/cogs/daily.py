@@ -103,26 +103,38 @@ class DailyCog(commands.Cog):
 
     @tasks.loop(minutes=5)
     async def post_reviews(self):
-        """Post un-reviewed pending puzzles to the review channel for admin vetting."""
-        if not self.review_channel_id:
-            return
-        channel = self.bot.get_channel(self.review_channel_id)
-        if channel is None:
-            log.warning("review channel %s not found", self.review_channel_id)
-            return
-        conn = db.connect(self.db_path)
+        """Periodically post un-reviewed pending puzzles to the review channel."""
         try:
-            for puzzle in repo.get_unposted_pending(conn, limit=REVIEW_BATCH):
-                await self._post_review(channel, puzzle, conn)
-            await self._alert_if_low(conn, channel)
+            await self._run_review_posting()
         except Exception:
             log.exception("post_reviews failed")
-        finally:
-            conn.close()
 
     @post_reviews.before_loop
     async def _before_reviews(self):
         await self.bot.wait_until_ready()
+
+    async def _run_review_posting(self):
+        """Post a batch of un-reviewed pending puzzles for admin vetting.
+
+        Returns the number of cards posted, or None if the review channel is unavailable.
+        Shared by the periodic loop and the /postreviews command.
+        """
+        if not self.review_channel_id:
+            return None
+        channel = self.bot.get_channel(self.review_channel_id)
+        if channel is None:
+            log.warning("review channel %s not found", self.review_channel_id)
+            return None
+        conn = db.connect(self.db_path)
+        posted = 0
+        try:
+            for puzzle in repo.get_unposted_pending(conn, limit=REVIEW_BATCH):
+                await self._post_review(channel, puzzle, conn)
+                posted += 1
+            await self._alert_if_low(conn, channel)
+        finally:
+            conn.close()
+        return posted
 
     async def _alert_if_low(self, conn, channel):
         """Ping the review channel when the approved queue is running low (once per drain)."""
@@ -297,6 +309,47 @@ class DailyCog(commands.Cog):
             log.exception("fetchcandidates command failed")
             await interaction.followup.send("Fetch failed — check the logs.", ephemeral=True)
 
+    @app_commands.command(name="queuestatus", description="(admin) Show how many puzzles are queued and awaiting review")
+    async def queuestatus(self, interaction):
+        if interaction.user.id not in self.admin_ids:
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        conn = db.connect(self.db_path)
+        try:
+            ready, pending = repo.queue_depth(conn)
+            unposted = repo.count_unposted_pending(conn)
+            live = repo.get_live_puzzle(conn)
+        finally:
+            conn.close()
+        lines = [
+            f"🟢 **Approved & ready to post:** {ready}",
+            f"🕵️ **Awaiting review:** {pending}  ({pending - unposted} posted, {unposted} not yet posted)",
+            f"🎯 **Live puzzle:** {'yes' if live is not None else 'none'}",
+        ]
+        await interaction.response.send_message("\n".join(lines), ephemeral=True)
+
+    @app_commands.command(name="postreviews", description="(admin) Post a batch of pending images to the review channel now")
+    async def postreviews(self, interaction):
+        if interaction.user.id not in self.admin_ids:
+            await interaction.response.send_message("Admins only.", ephemeral=True)
+            return
+        if not self.review_channel_id:
+            await interaction.response.send_message("`REVIEW_CHANNEL_ID` isn't configured.", ephemeral=True)
+            return
+        await interaction.response.defer(ephemeral=True)
+        try:
+            posted = await self._run_review_posting()
+        except Exception:
+            log.exception("postreviews command failed")
+            await interaction.followup.send("Failed — check the logs.", ephemeral=True)
+            return
+        if posted is None:
+            await interaction.followup.send("Review channel not found — check `REVIEW_CHANNEL_ID`.", ephemeral=True)
+        elif posted == 0:
+            await interaction.followup.send("Nothing to post — no un-reviewed pending images.", ephemeral=True)
+        else:
+            await interaction.followup.send(f"Posted **{posted}** image(s) for review.", ephemeral=True)
+
     @commands.Cog.listener()
     async def on_raw_reaction_add(self, payload):
         """Route review-channel votes and player report reactions."""
@@ -344,6 +397,10 @@ class DailyCog(commands.Cog):
         message = await channel.fetch_message(payload.message_id)
         embed = message.embeds[0] if message.embeds else discord.Embed()
         embed.description = verdict
+        if message.attachments:
+            # Re-link the image to its attachment; editing with the resolved CDN url
+            # makes Discord render a second, un-embedded copy of the same image.
+            embed.set_image(url=f"attachment://{message.attachments[0].filename}")
         await message.edit(embed=embed)
         try:
             await message.clear_reactions()  # tidy-up only; needs Manage Messages

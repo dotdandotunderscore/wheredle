@@ -133,6 +133,13 @@ def get_unposted_pending(conn, limit=5):
     ).fetchall()
 
 
+def count_unposted_pending(conn):
+    """Number of pending puzzles not yet shown in the review channel."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM puzzles WHERE status='pending' AND review_message_id IS NULL"
+    ).fetchone()[0]
+
+
 def set_review_message_id(conn, puzzle_id, message_id):
     """Record the Discord message id of a puzzle's review card."""
     with conn:
@@ -175,8 +182,8 @@ def queue_depth(conn):
     return row["ready"], row["pending"]
 
 
-def leaderboard(conn, since=None, limit=15):
-    """Return ranked totals per user, optionally only counting puzzles on/after `since`."""
+def leaderboard(conn, since=None, limit=15, offset=0):
+    """Return one ranked page of per-user totals, optionally only counting puzzles on/after `since`."""
     query = """SELECT u.display_name,
                       SUM(g.score) AS total,
                       COUNT(*) AS played,
@@ -188,9 +195,20 @@ def leaderboard(conn, since=None, limit=15):
     if since is not None:
         query += " WHERE p.puzzle_date >= ?"
         params.append(since)
-    query += " GROUP BY g.user_id ORDER BY total DESC, played ASC LIMIT ?"
-    params.append(limit)
+    query += " GROUP BY g.user_id ORDER BY total DESC, played ASC LIMIT ? OFFSET ?"
+    params.extend((limit, offset))
     return [dict(row) for row in conn.execute(query, params).fetchall()]
+
+
+def leaderboard_size(conn, since=None):
+    """Count the players on the leaderboard, for pagination."""
+    query = """SELECT COUNT(DISTINCT g.user_id)
+               FROM guesses g JOIN puzzles p ON p.id = g.puzzle_id"""
+    params = []
+    if since is not None:
+        query += " WHERE p.puzzle_date >= ?"
+        params.append(since)
+    return conn.execute(query, params).fetchone()[0]
 
 
 def current_streak(conn, user_id):

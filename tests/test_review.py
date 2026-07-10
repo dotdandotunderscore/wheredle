@@ -102,6 +102,14 @@ def test_queue_depth_counts_ready_and_pending(conn):
     assert (ready, pending) == (1, 1)
 
 
+def test_count_unposted_pending_ignores_posted_and_approved(conn):
+    _pending(conn, 1)                        # unposted
+    _pending(conn, 2, review_message_id=50)  # posted, still pending
+    _pending(conn, 3)
+    repo.approve_puzzle(conn, 3)             # no longer pending
+    assert repo.count_unposted_pending(conn) == 1
+
+
 def test_migration_sends_legacy_queue_through_review(tmp_path):
     path = str(tmp_path / "legacy.db")
     # Simulate a pre-review DB: a puzzles table with no review_message_id column.

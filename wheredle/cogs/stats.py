@@ -9,6 +9,9 @@ from ..game import repository as repo
 from ..game.share import share_text
 
 
+PAGE_SIZE = 15
+
+
 class StatsCog(commands.Cog):
     """Leaderboards, personal stats, and shareable results."""
 
@@ -17,35 +20,43 @@ class StatsCog(commands.Cog):
         self.db_path = db_path
 
     @app_commands.command(name="leaderboard", description="See the Wheredle rankings")
-    @app_commands.describe(period="all-time (default) or this-week")
+    @app_commands.describe(period="all-time (default) or this-week", page="Page number (15 per page)")
     @app_commands.choices(
         period=[
             app_commands.Choice(name="all-time", value="all"),
             app_commands.Choice(name="this-week", value="week"),
         ]
     )
-    async def leaderboard(self, interaction, period: app_commands.Choice[str] = None):
+    async def leaderboard(self, interaction, period: app_commands.Choice[str] = None,
+                          page: app_commands.Range[int, 1] = 1):
         scope = period.value if period else "all"
         since = None
         title = "🏆 Wheredle — All-time"
         if scope == "week":
             since = (datetime.date.today() - datetime.timedelta(days=7)).isoformat()
             title = "🏆 Wheredle — Last 7 days"
+        offset = (page - 1) * PAGE_SIZE
         conn = db.connect(self.db_path)
         try:
-            rows = repo.leaderboard(conn, since=since)
+            rows = repo.leaderboard(conn, since=since, limit=PAGE_SIZE, offset=offset)
+            total = repo.leaderboard_size(conn, since=since)
         finally:
             conn.close()
+        total_pages = max(1, (total + PAGE_SIZE - 1) // PAGE_SIZE)
         embed = discord.Embed(title=title, colour=0xF1C40F)
-        if not rows:
+        if total == 0:
             embed.description = "No scores yet — play with `/guess`!"
+        elif not rows:
+            embed.description = f"No players on page {page} — there are only {total_pages} page(s)."
         else:
             medals = ["🥇", "🥈", "🥉"]
             lines = []
             for i, row in enumerate(rows):
-                rank = medals[i] if i < 3 else f"`{i + 1:>2}`"
+                rank_num = offset + i + 1
+                rank = medals[rank_num - 1] if rank_num <= 3 else f"`{rank_num:>2}`"
                 lines.append(f"{rank} **{row['display_name']}** — {row['total']} pts ({row['played']} games, avg {row['average']})")
             embed.description = "\n".join(lines)
+            embed.set_footer(text=f"Page {page}/{total_pages} · {total} players")
         await interaction.response.send_message(embed=embed)
 
     @app_commands.command(name="stats", description="Your Wheredle stats (or another player's)")

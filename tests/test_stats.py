@@ -50,6 +50,19 @@ def test_user_stats(conn):
     assert stats == {"played": 3, "total": 300, "average": 100, "best": 100, "streak": 3}
 
 
+def test_leaderboard_paginates_with_offset(conn):
+    page1 = repo.leaderboard(conn, limit=1, offset=0)
+    page2 = repo.leaderboard(conn, limit=1, offset=1)
+    assert [r["display_name"] for r in page1] == ["Alice"]
+    assert [r["display_name"] for r in page2] == ["Bob"]
+    assert repo.leaderboard(conn, limit=1, offset=2) == []  # past the end
+
+
+def test_leaderboard_size_counts_players(conn):
+    assert repo.leaderboard_size(conn) == 2
+    assert repo.leaderboard_size(conn, since="2026-01-03") == 2
+
+
 def test_leaderboard_since_filters(conn):
     rows = repo.leaderboard(conn, since="2026-01-03")
     totals = {r["display_name"]: r["total"] for r in rows}

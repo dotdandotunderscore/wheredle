@@ -31,6 +31,15 @@ def _resolve_iso(value):
     return value if countries.get(value) else countries.resolve(value)
 
 
+def _reveal_answer(embed, puzzle):
+    """Prepend the correct answer to a board embed (only for viewers who've already guessed)."""
+    answer = countries.get(puzzle["answer_iso"])
+    name = answer.name if answer else puzzle["answer_iso"]
+    line = f"🌍 Answer: **{countries.flag_emoji(puzzle['answer_iso'])} {name}**"
+    embed.description = f"{line}\n\n{embed.description}" if embed.description else line
+    return embed
+
+
 class ConfirmGuess(discord.ui.View):
     """One-shot confirmation: locking is irreversible, so make the user confirm."""
 
@@ -99,6 +108,7 @@ class GuessCog(commands.Cog):
                 return
             if repo.has_guessed(conn, puzzle["id"], interaction.user.id):
                 embed = _board_embed("Today's guesses so far", repo.board(conn, puzzle["id"]))
+                _reveal_answer(embed, puzzle)
                 await interaction.response.send_message("You've already guessed — here's the board:", embed=embed, ephemeral=True)
                 return
             iso2 = _resolve_iso(country)
@@ -136,6 +146,7 @@ class GuessCog(commands.Cog):
                 await interaction.response.send_message("Guess first with `/guess`, then you can see the board.", ephemeral=True)
                 return
             embed = _board_embed("Today's guesses so far", repo.board(conn, puzzle["id"]))
+            _reveal_answer(embed, puzzle)
             await interaction.response.send_message(embed=embed, ephemeral=True)
         finally:
             conn.close()
