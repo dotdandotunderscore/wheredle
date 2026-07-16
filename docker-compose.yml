@@ -1,0 +1,7 @@
+services:
+  wheredle:
+    build: ./wheredle
+    restart: unless-stopped
+    env_file: ./wheredle/.env
+    volumes:
+      - ./data/wheredle:/app/data
