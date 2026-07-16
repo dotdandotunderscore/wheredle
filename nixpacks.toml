@@ -1,6 +1,0 @@
-[phases.setup]
-nixPkgs = [
-  "python312",
-  "gcc",
-  "stdenv.cc.cc.lib"
-]
